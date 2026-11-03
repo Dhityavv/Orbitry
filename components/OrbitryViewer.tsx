@@ -959,8 +959,18 @@ export default function OrbitryViewer() {
         <div className="panel about-card" role="dialog" aria-modal="true" aria-label="About Orbitry">
           <div className="dialog-heading"><div><h2>Orbitry</h2><span>3D ASSET PREVIEWER</span></div><button className="dialog-close" aria-label="Close About" onClick={() => setAboutOpen(false)}>×</button></div>
           <section className="about-section"><h3>About</h3><p>Orbitry is still under development, so please expect bugs while the viewer and converters continue to improve. If you find a problem, send a report or suggestion through Help &amp; Feedback.</p><p>Preview and inspect .blend, .glb, .gltf, and .obj files in your browser. Your files stay on this device; Orbitry reads them in your browser and does not upload them to the website.</p><p>Direct .blend preview does not evaluate modifiers, geometry nodes, or Blender shader graphs.</p></section>
-          <section className="help-card"><h3>Help &amp; Feedback</h3><p>Found a bug, have a suggestion, or need help? Send a message to the developer through the project issue form.</p><a className="primary" href="https://github.com/Dhityavv/Orbitry/issues/new" target="_blank" rel="noreferrer">Report a Bug or Suggest a Feature ↗</a></section>
-          <div className="about-footer"><a href="https://dhitya-space.vercel.app" target="_blank" rel="noreferrer">Developer Website ↗</a><a href="https://saweria.co/dhityavv" target="_blank" rel="noreferrer">Support Orbitry ↗</a><span>Developed by Dhitya Nurhadi</span></div>
+          <div className="about-links">
+            <a href="https://dhitya-space.vercel.app" target="_blank" rel="noreferrer">Developer Website ↗</a>
+            <a href="https://saweria.co/dhityavv" target="_blank" rel="noreferrer">Support Orbitry ↗</a>
+          </div>
+          <section className="help-card">
+            <h3>Help &amp; Feedback</h3>
+            <p>Found a bug, have a suggestion, or need help? Send a message to the developer through the project issue form.</p>
+            <a className="primary" href="https://github.com/Dhityavv/Orbitry/issues/new" target="_blank" rel="noreferrer">Report a Bug or Suggest a Feature ↗</a>
+          </section>
+          <div className="about-footer">
+            <span>Developed by Dhitya Nurhadi</span>
+          </div>
         </div>
       </div>
       <div className={`about ${shortcutsOpen ? 'show' : ''}`} role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setShortcutsOpen(false); }}>
