@@ -248,7 +248,11 @@ export default function OrbitryViewer() {
       if (!mesh.isMesh) return;
       if (!mesh.name) mesh.name = `Mesh ${objects.length + 1}`;
       mesh.userData.originalMaterial ??= mesh.material;
+      const origMats = Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial];
+      origMats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
       mesh.material = modeRef.current === 'wire' ? engine.hiddenMaterial : modeRef.current === 'solid' ? engine.solidMaterial : mesh.userData.originalMaterial;
+      const activeMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      activeMats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
       mesh.castShadow = modeRef.current === 'render';
       mesh.receiveShadow = modeRef.current === 'render';
       objects.push({ id: mesh.uuid, name: mesh.name, visible: mesh.visible, object: mesh });
@@ -323,7 +327,7 @@ export default function OrbitryViewer() {
     const engine: Engine = {
       renderer, scene, camera, controls, grid, floor, hemisphere, key, environment,
       model: null,
-      solidMaterial: new THREE.MeshStandardMaterial({ color: 0xb9bdca, roughness: 0.65 }),
+      solidMaterial: new THREE.MeshStandardMaterial({ color: 0xb9bdca, roughness: 0.65, side: THREE.DoubleSide }),
       hiddenMaterial: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       selectionBox,
     };
@@ -397,7 +401,11 @@ export default function OrbitryViewer() {
       if (!mesh.userData.originalMaterial) mesh.userData.originalMaterial = mesh.material;
       mesh.material = mode === 'wire' ? engine.hiddenMaterial : mode === 'solid' ? engine.solidMaterial : mesh.userData.originalMaterial;
       const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      list.forEach((material) => { (material as THREE.Material & { wireframe?: boolean }).wireframe = false; material.needsUpdate = true; });
+      list.forEach((material) => {
+        (material as THREE.Material & { wireframe?: boolean }).wireframe = false;
+        material.side = THREE.DoubleSide;
+        material.needsUpdate = true;
+      });
       mesh.castShadow = mode === 'render';
       mesh.receiveShadow = mode === 'render';
     });
@@ -567,54 +575,90 @@ export default function OrbitryViewer() {
         const bytes = new Uint8Array(await file.arrayBuffer());
         const intermediateRoot = await loadBlendFile(bytes);
 
-        // 2. Prepare clean export group (strip wireframes)
-        const exportRoot = intermediateRoot.clone(true);
-        const wires: THREE.Object3D[] = [];
-        exportRoot.traverse((obj) => { if (obj.userData?.isWire) wires.push(obj); });
-        wires.forEach((w) => w.removeFromParent());
-        exportRoot.updateMatrixWorld(true);
-
-        // 3. Automatically convert to standard GLB (glTF 2.0 Binary - best format for textures and PBR)
-        const gltfExporter = new GLTFExporter();
-        const glbBuffer = (await gltfExporter.parseAsync(exportRoot, {
-          binary: true,
-          embedImages: true,
-        })) as ArrayBuffer;
-
-        // 4. Generate OBJ representation preserving polygon quads/n-gons topology
-        const objData = exportTopologyObj(exportRoot);
-
-        // 5. Parse the converted GLB to preview in Three.js viewport
-        const gltfLoader = new GLTFLoader();
-        const gltf = await new Promise<THREE.Group>((resolve, reject) => {
-          gltfLoader.parse(glbBuffer, '', (result) => resolve(result.scene), reject);
-        });
-
-        // Preserve original topology data for future OBJ export
-        const origMeshes: THREE.Mesh[] = [];
-        exportRoot.traverse((o) => { if ((o as THREE.Mesh).isMesh) origMeshes.push(o as THREE.Mesh); });
-        const gltfMeshes: THREE.Mesh[] = [];
-        gltf.traverse((o) => { if ((o as THREE.Mesh).isMesh) gltfMeshes.push(o as THREE.Mesh); });
-        gltfMeshes.forEach((mesh, idx) => {
-          if (origMeshes[idx]?.geometry?.userData?.originalTopology) {
-            mesh.geometry.userData.originalTopology = origMeshes[idx].geometry.userData.originalTopology;
+        // Ensure double-sided rendering on intermediate root so no faces are culled
+        intermediateRoot.traverse((obj) => {
+          const mesh = obj as THREE.Mesh;
+          if (mesh.isMesh && mesh.material) {
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            mats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
           }
         });
 
+        // 2. Prepare clean export group (strip wireframes)
+        const exportRoot = intermediateRoot.clone(true);
+        const wires: THREE.Object3D[] = [];
+        exportRoot.traverse((obj) => {
+          if (obj.userData?.isWire) wires.push(obj);
+          const mesh = obj as THREE.Mesh;
+          if (mesh.isMesh && mesh.material) {
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            mats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
+          }
+        });
+        wires.forEach((w) => w.removeFromParent());
+        exportRoot.updateMatrixWorld(true);
+
         const baseName = file.name.replace(/\.[^.]+$/, '') || 'orbitry-model';
+
+        // 3. Defensively convert to standard GLB and OBJ
+        let glbBuffer: ArrayBuffer | null = null;
+        let gltfScene: THREE.Group | null = null;
+        let objData: string | null = null;
+
+        try {
+          const gltfExporter = new GLTFExporter();
+          glbBuffer = (await gltfExporter.parseAsync(exportRoot, {
+            binary: true,
+            embedImages: true,
+          })) as ArrayBuffer;
+
+          const gltfLoader = new GLTFLoader();
+          gltfScene = await new Promise<THREE.Group>((resolve, reject) => {
+            gltfLoader.parse(glbBuffer!, '', (result) => resolve(result.scene), reject);
+          });
+
+          gltfScene.traverse((obj) => {
+            const mesh = obj as THREE.Mesh;
+            if (mesh.isMesh && mesh.material) {
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              mats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
+            }
+          });
+
+          // Preserve original topology data for future OBJ export
+          const origMeshes: THREE.Mesh[] = [];
+          exportRoot.traverse((o) => { if ((o as THREE.Mesh).isMesh) origMeshes.push(o as THREE.Mesh); });
+          const gltfMeshes: THREE.Mesh[] = [];
+          gltfScene.traverse((o) => { if ((o as THREE.Mesh).isMesh) gltfMeshes.push(o as THREE.Mesh); });
+          gltfMeshes.forEach((mesh, idx) => {
+            if (origMeshes[idx]?.geometry?.userData?.originalTopology) {
+              mesh.geometry.userData.originalTopology = origMeshes[idx].geometry.userData.originalTopology;
+            }
+          });
+        } catch (convErr) {
+          console.warn('GLB auto-conversion encountered warning:', convErr);
+        }
+
+        try {
+          objData = exportTopologyObj(exportRoot);
+        } catch (objErr) {
+          console.warn('OBJ topology export encountered warning:', objErr);
+        }
+
         setConvertedModel({
           sourceName: file.name,
           baseName,
           activeFormat: 'glb',
-          glbBuffer,
-          objData,
-          gltfScene: gltf,
+          glbBuffer: glbBuffer ?? undefined,
+          objData: objData ?? undefined,
+          gltfScene: gltfScene ?? undefined,
           convertedAt: new Date().toLocaleTimeString(),
         });
 
-        setLoadedModel(gltf, file.name);
+        const displayModel = gltfScene || intermediateRoot;
+        setLoadedModel(displayModel, file.name);
         setIsConverting(false);
-        toast(`✨ Successfully auto-converted ${file.name} to GLB (glTF 2.0). Previewing converted model.`, 5000);
+        toast(`✨ Successfully auto-converted ${file.name}. Previewing model.`, 4000);
         return true;
       } else if (extension === 'obj') {
         setConvertedModel(null);

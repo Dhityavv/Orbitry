@@ -145,11 +145,10 @@ In Blender, UV coordinates are defined per corner (loop vertex), while vertex po
 3. Corners across UV seams (different UVs at the same 3D coordinate) are cleanly split into distinct buffer vertices.
 4. Triangles obtain exact corner UV coordinates without seam distortion or cross-face bleeding.
 
-### 5.2 Winding Order Consistency (Newell's Method)
-To avoid inverted normals and overlapping triangles:
-1. Polygon face normal $\mathbf{n} = (n_x, n_y, n_z)$ is computed using Newell's polygon normal formula.
-2. For each fan triangle $(0, i, i+1)$, the triangle cross product normal $\mathbf{m} = (\mathbf{p}_i - \mathbf{p}_0) \times (\mathbf{p}_{i+1} - \mathbf{p}_0)$ is compared against $\mathbf{n}$.
-3. If $\mathbf{m} \cdot \mathbf{n} < 0$, vertices $i$ and $i+1$ (and their corresponding UV coordinates) are swapped, ensuring outward-facing orientation.
+### 5.2 Consistent Polygon Loop Fan Triangulation & Double-Sided Rendering
+To prevent missing faces ("face bolong") and inverted normal holes on non-convex or curved surfaces:
+1. Polygon loops in Blender maintain counter-clockwise perimeter order. Fan triangulation $(0, i, i+1)$ preserves this exact loop orientation across all polygons without destructive per-triangle swapping.
+2. `THREE.DoubleSide` is systematically enforced across all materials (Solid mode, Material Preview, Render mode, and converted GLB/OBJ models) matching Blender's default viewport behavior (backface culling OFF), ensuring single-sided sheets, inner mug walls, nori wrap, and curved surfaces render cleanly from all angles.
 
 ### 5.3 Seamless Normal Smoothing Across UV Splits
 When vertices are split along UV seams, naive normal computation would create sharp lighting seams. Orbitry resolves this by:
