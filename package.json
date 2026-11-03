@@ -1,0 +1,26 @@
+{
+  "name": "orbitry-next",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test:blend": "node scripts/test-blend.mjs"
+  },
+  "dependencies": {
+    "jsblender": "0.0.4",
+    "next": "16.4.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "three": "0.187.0",
+    "fzstd": "0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9"
+  },
+  "type": "module"
+}
