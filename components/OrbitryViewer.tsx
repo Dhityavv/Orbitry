@@ -104,10 +104,10 @@ export default function OrbitryViewer() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const modeRef = useRef<ViewMode>('solid');
+  const modeRef = useRef<ViewMode>('material');
   const pieRef = useRef<FastMenu | null>(null);
   const mouseRef = useRef({ x: typeof window === 'undefined' ? 640 : window.innerWidth / 2, y: typeof window === 'undefined' ? 360 : window.innerHeight / 2 });
-  const [mode, setMode] = useState<ViewMode>('solid');
+  const [mode, setMode] = useState<ViewMode>('material');
   const [theme, setTheme] = useState('dark');
   const [gridOn, setGridOn] = useState(true);
   const [spinning, setSpinning] = useState(false);
@@ -247,6 +247,20 @@ export default function OrbitryViewer() {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       if (!mesh.name) mesh.name = `Mesh ${objects.length + 1}`;
+      if (mesh.matrixWorld && mesh.matrixWorld.determinant() < 0) {
+        const index = mesh.geometry?.getIndex();
+        if (index && !mesh.geometry.userData?.windingInverted) {
+          mesh.geometry.userData ??= {};
+          mesh.geometry.userData.windingInverted = true;
+          const arr = index.array;
+          for (let i = 0; i < arr.length; i += 3) {
+            const tmp = arr[i + 1];
+            arr[i + 1] = arr[i + 2];
+            arr[i + 2] = tmp;
+          }
+          index.needsUpdate = true;
+        }
+      }
       mesh.userData.originalMaterial ??= mesh.material;
       const origMats = Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial];
       origMats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
@@ -331,6 +345,9 @@ export default function OrbitryViewer() {
       hiddenMaterial: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       selectionBox,
     };
+    scene.environment = environment;
+    hemisphere.intensity = 0.15;
+    key.intensity = 0.5;
     engineRef.current = engine;
     const demo = createDemo();
     demo.children.forEach((object, index) => { object.name = ['Torus Knot', 'Cylinder', 'Sphere'][index]; });
