@@ -1,6 +1,26 @@
 # Orbitry
 
-Orbitry is a browser-based 3D asset previewer built with Next.js, React, and Three.js. It supports `.blend`, `.glb`, `.gltf`, and `.obj` files.
+Orbitry is a modern, high-performance browser-based 3D asset previewer and converter built with Next.js, React, and Three.js. It supports `.blend`, `.glb`, `.gltf`, and `.obj` files with client-side automated conversion, clean polygon topology handling, and accurate upright texture rendering.
+
+## Automated Conversion Mechanism
+
+When you import a `.blend` file (via drag-and-drop, file selector, or example templates):
+1. **Automatic Conversion**: Orbitry automatically converts the `.blend` file into **GLB (glTF 2.0 Binary)**—the optimal web 3D standard supporting complete PBR materials, roughness, metalness, and embedded textures.
+2. **Topology-Preserving OBJ**: Orbitry simultaneously prepares a clean **Wavefront OBJ** export that preserves original quad and n-gon polygon face loops.
+3. **Instant Preview & Format Toggling**: The viewport renders the verified converted model. A sleek conversion action bar lets you toggle between the textured GLB preview and the OBJ topology preview with one click.
+4. **1-Click Downloads**: Download the converted `.glb` or `.obj` file immediately without waiting for secondary conversions.
+
+## Texture & Topology Fixes
+
+- **Upright Texture Alignment**: Fixed vertical texture inversion (`flipY = true` in Three.js and proper glTF canvas flipping). Textures from Blender models render right-side up without vertical flipping.
+- **UV Seam Splitting**: UV coordinates are mapped per corner loop, and vertices on UV seams are cleanly separated. This eliminates seam stretching, texture bleeding, and overlapping distortion.
+- **Smooth Normal Accumulation**: Vertex normals are calculated per 3D position across UV splits, guaranteeing seamless, neat lighting across the entire mesh.
+- **Winding Order Consistency**: Newell's method checks polygon face normals and corrects triangle windings, preventing inverted or overlapping faces.
+
+## Documentation
+
+- [`architecture.md`](./architecture.md): In-depth system architecture, pipeline flow, UV seam splitting algorithms, and conversion engine specifications.
+- [`design.md`](./design.md): UI/UX design specifications, shading modes, fast pie menus, color system, and interaction ergonomics.
 
 ## Run locally
 

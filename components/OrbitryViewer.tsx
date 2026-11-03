@@ -16,6 +16,16 @@ type FastMenu = { key: 'z' | 'x'; x: number; y: number; hover: number };
 type SceneObject = { id: string; name: string; visible: boolean; object: THREE.Mesh };
 type TemplateModelSlot = { name: string; file: File | null; url?: string };
 type ExportFormat = 'glb' | 'gltf' | 'obj' | 'stl' | 'ply';
+type ConvertedModel = {
+  sourceName: string;
+  baseName: string;
+  activeFormat: 'glb' | 'obj';
+  glbBuffer?: ArrayBuffer;
+  objData?: string;
+  gltfScene?: THREE.Group;
+  objScene?: THREE.Group;
+  convertedAt: string;
+};
 type Engine = {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -112,6 +122,8 @@ export default function OrbitryViewer() {
     { name: 'tedung-keraton.blend', file: null, url: '/templates/tedung-keraton.blend' },
     { name: 'fantasy-fish.blend', file: null, url: '/templates/fantasy-fish.blend' },
   ]);
+  const [convertedModel, setConvertedModel] = useState<ConvertedModel | null>(null);
+  const [isConverting, setIsConverting] = useState(false);
   const [sceneObjects, setSceneObjects] = useState<SceneObject[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [dropOpen, setDropOpen] = useState(false);
@@ -492,19 +504,125 @@ export default function OrbitryViewer() {
     };
   }, [aboutOpen, shortcutsOpen, selectedObjectId, frameModel, selectMode, toggleGrid, toggleSpin, trackSelectedObject]);
 
+  const switchToObjView = useCallback(() => {
+    if (!convertedModel?.objData) return;
+    try {
+      const loader = new OBJLoader();
+      const objGroup = loader.parse(convertedModel.objData);
+      setLoadedModel(objGroup, `${convertedModel.sourceName} (OBJ View)`);
+      setConvertedModel((prev) => prev ? { ...prev, activeFormat: 'obj', objScene: objGroup } : null);
+      toast('Switched viewport to converted OBJ model.', 3000);
+    } catch (e) {
+      toast('Could not render OBJ view: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    }
+  }, [convertedModel, setLoadedModel, toast]);
+
+  const switchToGlbView = useCallback(async () => {
+    if (!convertedModel?.glbBuffer) return;
+    try {
+      const loader = new GLTFLoader();
+      const gltf = await new Promise<THREE.Group>((resolve, reject) => {
+        loader.parse(convertedModel.glbBuffer!, '', (res) => resolve(res.scene), reject);
+      });
+      setLoadedModel(gltf, `${convertedModel.sourceName} (GLB View)`);
+      setConvertedModel((prev) => prev ? { ...prev, activeFormat: 'glb', gltfScene: gltf } : null);
+      toast('Switched viewport to converted GLB model.', 3000);
+    } catch (e) {
+      toast('Could not render GLB view: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    }
+  }, [convertedModel, setLoadedModel, toast]);
+
+  const downloadConvertedGlb = useCallback(() => {
+    if (!convertedModel?.glbBuffer) return;
+    const blob = new Blob([convertedModel.glbBuffer], { type: 'model/gltf-binary' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${convertedModel.baseName}.glb`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Downloaded ${convertedModel.baseName}.glb!`, 3500);
+  }, [convertedModel, toast]);
+
+  const downloadConvertedObj = useCallback(() => {
+    if (!convertedModel?.objData) return;
+    const blob = new Blob([convertedModel.objData], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${convertedModel.baseName}.obj`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Downloaded ${convertedModel.baseName}.obj!`, 3500);
+  }, [convertedModel, toast]);
+
   const loadFile = useCallback(async (file: File): Promise<boolean> => {
     const extension = file.name.split('.').pop()?.toLowerCase();
     try {
       if (extension === 'blend') {
-        toast('Reading Blender file…', 30000);
-        const root = await loadBlendFile(new Uint8Array(await file.arrayBuffer()));
-        setLoadedModel(root, file.name);
+        setIsConverting(true);
+        toast(`Auto-converting ${file.name} to GLTF/GLB (best option for web preview)...`, 30000);
+
+        // 1. Parse .blend file into intermediate representation with upright textures and seam-split UVs
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const intermediateRoot = await loadBlendFile(bytes);
+
+        // 2. Prepare clean export group (strip wireframes)
+        const exportRoot = intermediateRoot.clone(true);
+        const wires: THREE.Object3D[] = [];
+        exportRoot.traverse((obj) => { if (obj.userData?.isWire) wires.push(obj); });
+        wires.forEach((w) => w.removeFromParent());
+        exportRoot.updateMatrixWorld(true);
+
+        // 3. Automatically convert to standard GLB (glTF 2.0 Binary - best format for textures and PBR)
+        const gltfExporter = new GLTFExporter();
+        const glbBuffer = (await gltfExporter.parseAsync(exportRoot, {
+          binary: true,
+          embedImages: true,
+        })) as ArrayBuffer;
+
+        // 4. Generate OBJ representation preserving polygon quads/n-gons topology
+        const objData = exportTopologyObj(exportRoot);
+
+        // 5. Parse the converted GLB to preview in Three.js viewport
+        const gltfLoader = new GLTFLoader();
+        const gltf = await new Promise<THREE.Group>((resolve, reject) => {
+          gltfLoader.parse(glbBuffer, '', (result) => resolve(result.scene), reject);
+        });
+
+        // Preserve original topology data for future OBJ export
+        const origMeshes: THREE.Mesh[] = [];
+        exportRoot.traverse((o) => { if ((o as THREE.Mesh).isMesh) origMeshes.push(o as THREE.Mesh); });
+        const gltfMeshes: THREE.Mesh[] = [];
+        gltf.traverse((o) => { if ((o as THREE.Mesh).isMesh) gltfMeshes.push(o as THREE.Mesh); });
+        gltfMeshes.forEach((mesh, idx) => {
+          if (origMeshes[idx]?.geometry?.userData?.originalTopology) {
+            mesh.geometry.userData.originalTopology = origMeshes[idx].geometry.userData.originalTopology;
+          }
+        });
+
+        const baseName = file.name.replace(/\.[^.]+$/, '') || 'orbitry-model';
+        setConvertedModel({
+          sourceName: file.name,
+          baseName,
+          activeFormat: 'glb',
+          glbBuffer,
+          objData,
+          gltfScene: gltf,
+          convertedAt: new Date().toLocaleTimeString(),
+        });
+
+        setLoadedModel(gltf, file.name);
+        setIsConverting(false);
+        toast(`✨ Successfully auto-converted ${file.name} to GLB (glTF 2.0). Previewing converted model.`, 5000);
         return true;
       } else if (extension === 'obj') {
+        setConvertedModel(null);
         const root = new OBJLoader().parse(await file.text());
         setLoadedModel(root, file.name);
         return true;
       } else if (extension === 'glb' || extension === 'gltf') {
+        setConvertedModel(null);
         const data = await file.arrayBuffer();
         const loader = new GLTFLoader();
         const gltf = await new Promise<THREE.Group>((resolve, reject) => loader.parse(data, '', (result) => resolve(result.scene), reject));
@@ -515,6 +633,7 @@ export default function OrbitryViewer() {
         return false;
       }
     } catch (error) {
+      setIsConverting(false);
       const reason = error instanceof Error ? error.message : 'The file could not be parsed.';
       toast(`${reason} For best compatibility, export from Blender as glTF 2.0 (.glb).`, 10000);
       return false;
@@ -601,6 +720,17 @@ export default function OrbitryViewer() {
     setObjectsOpen(false);
   };
   const exportModel = async (format: ExportFormat) => {
+    if (format === 'glb' && convertedModel?.glbBuffer) {
+      downloadConvertedGlb();
+      setConvertOpen(false);
+      return;
+    }
+    if (format === 'obj' && convertedModel?.objData) {
+      downloadConvertedObj();
+      setConvertOpen(false);
+      return;
+    }
+
     const engine = engineRef.current;
     if (!engine?.model) {
       toast('Load a model before converting it.');
@@ -688,7 +818,64 @@ export default function OrbitryViewer() {
       </div>
       {templatesOpen && <div className="panel template-menu"><div className="hint">Background</div><div className="template-backgrounds"><button onClick={() => background('studio')}>Studio</button><button onClick={() => background('light')}>Light</button><button onClick={() => background('dark')}>Dark</button></div><div className="template-section-title">Example Models</div><div className="template-slots">{templateModels.map((slot, index) => <div className="template-slot" key={index}><button className="template-load" title={`Load ${slot.name}`} onClick={() => void loadTemplateSlot(slot)}>{slot.name}</button></div>)}</div></div>}
       {objectsOpen && <div className="panel objects-menu"><div className="object-list-heading"><span>Scene Objects</span><button onClick={showAllObjects}>Show All</button></div>{sceneObjects.length ? sceneObjects.map((item) => <div className={`object-row${selectedObjectId === item.id ? ' selected' : ''}`} key={item.id}><button className="object-name" title={item.name} onClick={() => setSelectedObjectId(item.id)}>{item.name}</button><button className="object-visibility" aria-label={`${item.visible ? 'Hide' : 'Show'} ${item.name}`} title={item.visible ? 'Hide object' : 'Show object'} onClick={() => toggleObjectVisibility(item)}>{item.visible ? '◉' : '○'}</button></div>) : <div className="hint">No mesh objects</div>}</div>}
-      {convertOpen && <div className="panel convert-menu"><div className="convert-heading"><strong>Convert to</strong><span>Export the current model locally</span></div>{([['obj', 'OBJ', 'Best choice for clean topology'], ['glb', 'GLB', 'Triangle-based glTF 2.0'], ['gltf', 'glTF', 'Triangle-based glTF 2.0'], ['stl', 'STL', 'Triangles only · no materials'], ['ply', 'PLY', 'Triangle-based geometry']] as const).map(([format, label, detail]) => <button className="convert-option" key={format} onClick={() => void exportModel(format)}><span className="format-badge">{label}</span><span className="format-detail">{detail}</span><span className="format-arrow">›</span></button>)}<div className="convert-note">Orbitry is still being developed, so occasional bugs are expected. If clean topology matters, OBJ is currently the best option because it keeps the original Blender face loops when available. Files stay on this device.</div></div>}
+      {convertOpen && (
+        <div className="panel convert-menu">
+          {convertedModel && (
+            <div className="converted-section">
+              <div className="convert-heading">
+                <strong>Auto-Converted Files Ready</strong>
+                <span>Derived from {convertedModel.sourceName}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', margin: '4px 0 8px' }}>
+                <button
+                  className={`convert-option ${convertedModel.activeFormat === 'glb' ? 'on' : ''}`}
+                  style={{ flex: 1, padding: '7px', justifyContent: 'center', margin: 0 }}
+                  onClick={() => void switchToGlbView()}
+                >
+                  View GLB
+                </button>
+                <button
+                  className={`convert-option ${convertedModel.activeFormat === 'obj' ? 'on' : ''}`}
+                  style={{ flex: 1, padding: '7px', justifyContent: 'center', margin: 0 }}
+                  onClick={switchToObjView}
+                >
+                  View OBJ
+                </button>
+              </div>
+              <button className="convert-option" onClick={downloadConvertedGlb}>
+                <span className="format-badge">GLB</span>
+                <div className="format-detail">
+                  <b>Download Converted GLB</b>
+                  <span>glTF 2.0 Binary · Embedded textures & PBR materials (Best Option)</span>
+                </div>
+                <span className="format-arrow">⬇</span>
+              </button>
+              <button className="convert-option" onClick={downloadConvertedObj}>
+                <span className="format-badge">OBJ</span>
+                <div className="format-detail">
+                  <b>Download Converted OBJ</b>
+                  <span>Clean polygon topology · Quads/N-gons preserved</span>
+                </div>
+                <span className="format-arrow">⬇</span>
+              </button>
+            </div>
+          )}
+          <div className="convert-heading">
+            <strong>Convert to</strong>
+            <span>Export the current model locally</span>
+          </div>
+          {([['obj', 'OBJ', 'Best choice for clean topology'], ['glb', 'GLB', 'Triangle-based glTF 2.0'], ['gltf', 'glTF', 'Triangle-based glTF 2.0'], ['stl', 'STL', 'Triangles only · no materials'], ['ply', 'PLY', 'Triangle-based geometry']] as const).map(([format, label, detail]) => (
+            <button className="convert-option" key={format} onClick={() => void exportModel(format)}>
+              <span className="format-badge">{label}</span>
+              <div className="format-detail"><b>{label}</b><span>{detail}</span></div>
+              <span className="format-arrow">›</span>
+            </button>
+          ))}
+          <div className="convert-note">
+            Orbitry automatically converts .blend files to GLB (glTF 2.0) upon import. For 3D web preview and textures, GLB is the best format. If clean polygon topology matters, OBJ is available to preserve original Blender face loops. Files stay on this device.
+          </div>
+        </div>
+      )}
       <div className="panel tools">
         <button className={gridOn ? 'on' : ''} title="G" onClick={toggleGrid}>Grid</button>
         <button className={spinning ? 'on' : ''} title="R" onClick={toggleSpin}>Auto-Rotate</button>
