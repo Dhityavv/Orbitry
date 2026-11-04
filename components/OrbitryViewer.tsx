@@ -247,20 +247,6 @@ export default function OrbitryViewer() {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       if (!mesh.name) mesh.name = `Mesh ${objects.length + 1}`;
-      if (mesh.matrixWorld && mesh.matrixWorld.determinant() < 0) {
-        const index = mesh.geometry?.getIndex();
-        if (index && !mesh.geometry.userData?.windingInverted) {
-          mesh.geometry.userData ??= {};
-          mesh.geometry.userData.windingInverted = true;
-          const arr = index.array;
-          for (let i = 0; i < arr.length; i += 3) {
-            const tmp = arr[i + 1];
-            arr[i + 1] = arr[i + 2];
-            arr[i + 2] = tmp;
-          }
-          index.needsUpdate = true;
-        }
-      }
       mesh.userData.originalMaterial ??= mesh.material;
       const origMats = Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial];
       origMats.forEach((m) => { if (m) m.side = THREE.DoubleSide; });
@@ -416,7 +402,30 @@ export default function OrbitryViewer() {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       if (!mesh.userData.originalMaterial) mesh.userData.originalMaterial = mesh.material;
-      mesh.material = mode === 'wire' ? engine.hiddenMaterial : mode === 'solid' ? engine.solidMaterial : mesh.userData.originalMaterial;
+      if (mode === 'wire') {
+        mesh.material = engine.hiddenMaterial;
+      } else if (mode === 'solid') {
+        const origList = (Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial]) as (THREE.Material & { alphaTest?: number; map?: THREE.Texture | null })[];
+        const hasCutout = origList.some((m) => (m?.alphaTest ?? 0) > 0 && m?.map);
+        if (hasCutout) {
+          const solidList = origList.map((m) => {
+            if ((m?.alphaTest ?? 0) > 0 && m?.map) {
+              const clay = engine.solidMaterial.clone();
+              clay.map = m.map;
+              clay.alphaTest = m.alphaTest ?? 0.05;
+              clay.transparent = true;
+              clay.side = THREE.DoubleSide;
+              return clay;
+            }
+            return engine.solidMaterial;
+          });
+          mesh.material = Array.isArray(mesh.userData.originalMaterial) ? solidList : solidList[0];
+        } else {
+          mesh.material = engine.solidMaterial;
+        }
+      } else {
+        mesh.material = mesh.userData.originalMaterial;
+      }
       const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       list.forEach((material) => {
         (material as THREE.Material & { wireframe?: boolean }).wireframe = false;
@@ -672,7 +681,7 @@ export default function OrbitryViewer() {
           convertedAt: new Date().toLocaleTimeString(),
         });
 
-        const displayModel = gltfScene || intermediateRoot;
+        const displayModel = intermediateRoot;
         setLoadedModel(displayModel, file.name);
         setIsConverting(false);
         toast(`✨ Successfully auto-converted ${file.name}. Previewing model.`, 4000);
