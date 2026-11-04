@@ -291,6 +291,8 @@ export default function OrbitryViewer() {
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
     key.position.set(4, 8, 5);
     key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0005;
+    key.shadow.normalBias = 0.02;
     const grid = new THREE.GridHelper(20, 40, 0x868b9a, 0xb9bdca);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.ShadowMaterial({ opacity: 0.28 }));
     floor.rotation.x = -Math.PI / 2;
@@ -402,17 +404,17 @@ export default function OrbitryViewer() {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       if (!mesh.userData.originalMaterial) mesh.userData.originalMaterial = mesh.material;
+      const origList = (Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial]) as (THREE.Material & { alphaTest?: number; map?: THREE.Texture | null })[];
+      const hasCutout = origList.some((m) => (m?.alphaTest ?? 0) > 0 && m?.map);
       if (mode === 'wire') {
         mesh.material = engine.hiddenMaterial;
       } else if (mode === 'solid') {
-        const origList = (Array.isArray(mesh.userData.originalMaterial) ? mesh.userData.originalMaterial : [mesh.userData.originalMaterial]) as (THREE.Material & { alphaTest?: number; map?: THREE.Texture | null })[];
-        const hasCutout = origList.some((m) => (m?.alphaTest ?? 0) > 0 && m?.map);
         if (hasCutout) {
           const solidList = origList.map((m) => {
             if ((m?.alphaTest ?? 0) > 0 && m?.map) {
               const clay = engine.solidMaterial.clone();
               clay.map = m.map;
-              clay.alphaTest = m.alphaTest ?? 0.05;
+              clay.alphaTest = m.alphaTest ?? 0.3;
               clay.transparent = true;
               clay.side = THREE.DoubleSide;
               return clay;
@@ -433,7 +435,17 @@ export default function OrbitryViewer() {
         material.needsUpdate = true;
       });
       mesh.castShadow = mode === 'render';
-      mesh.receiveShadow = mode === 'render';
+      mesh.receiveShadow = mode === 'render' && !hasCutout;
+      if (hasCutout) {
+        const mat = (origList.find((m) => (m?.alphaTest ?? 0) > 0 && m?.map) || origList[0]) as THREE.MeshStandardMaterial;
+        if (mat?.map) {
+          mesh.customDepthMaterial = new THREE.MeshDepthMaterial({
+            depthPacking: THREE.RGBADepthPacking,
+            map: mat.map,
+            alphaTest: mat.alphaTest || 0.3,
+          });
+        }
+      }
     });
     engine.scene.environment = mode === 'solid' || mode === 'wire' ? null : engine.environment;
     engine.hemisphere.intensity = mode === 'solid' || mode === 'wire' ? 0.9 : 0.15;
